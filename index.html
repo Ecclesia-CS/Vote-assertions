@@ -144,7 +144,7 @@
 
 <script>
 // ─── Constantes ───────────────────────────────────────────
-const ADMIN_PASSWORD = "Pierre-Yves-Richard"; // ← À CHANGER avant déploiement
+const ADMIN_PASSWORD = "Pierre-Yves-Richard";
 
 // ─── Client Supabase ──────────────────────────────────────
 const { createClient } = supabase;
@@ -157,11 +157,12 @@ let state = {
   view:             "voter",
   adminTab:         "stats",
   assertions:       [],
-  myVotes:          JSON.parse(localStorage.getItem("ecclesia_votes") || "{}"),
-  adminMode:        false,
+  myVotes:          {},
+  adminMode:        localStorage.getItem("ecclesia_admin") === "true",
   modal:            null,
   pwInput:          "",
   pwError:          false,
+  showPw:           false,
   newA:             "",
   mergeTargets:     [],
   aiResult:         null,
@@ -183,7 +184,15 @@ function csLabel(s) {
   if (s >= 35) return { l: "Consensus moyen", c: "c-mid" };
   return { l: "Pas de consensus", c: "c-low" };
 }
-function saveVotes() { localStorage.setItem("ecclesia_votes", JSON.stringify(state.myVotes)); }
+// Reconstruit myVotes depuis Supabase (source de vérité)
+async function loadMyVotes() {
+  if (!state.pseudo) return;
+  const { data } = await db.from("votes").select("assertion_id, vote").eq("pseudo", state.pseudo);
+  if (data) {
+    state.myVotes = {};
+    data.forEach(v => { state.myVotes[v.assertion_id] = v.vote; });
+  }
+}
 
 // ─── Chargement config ────────────────────────────────────
 async function loadConfig() {
@@ -237,10 +246,12 @@ function subscribeRealtime() {
 
 // ─── Actions ─────────────────────────────────────────────
 async function handleVote(assertionId, vote) {
-  state.myVotes[assertionId] = vote;
-  saveVotes();
+  state.myVotes[assertionId] = vote; // mise à jour optimiste locale
   const { error } = await db.from("votes").insert({ assertion_id: assertionId, pseudo: state.pseudo, vote });
-  if (error) console.warn("Vote déjà enregistré ou erreur:", error.message);
+  if (error) {
+    console.warn("Vote déjà enregistré ou erreur:", error.message);
+    delete state.myVotes[assertionId]; // rollback si erreur
+  }
   await loadAssertions();
   render();
 }
@@ -390,6 +401,7 @@ function renderTabs() {
         { l: `Modérer${pending > 0 ? " ("+pending+")" : ""}`, fn: () => { state.adminTab = "moderate"; render(); }, active: state.adminTab === "moderate" },
         { l: "Politique",   fn: () => { state.adminTab = "policy";   render(); }, active: state.adminTab === "policy" },
         { l: "Fusion IA",   fn: () => { state.adminTab = "merge";    render(); }, active: state.adminTab === "merge" },
+        { l: "🔓 Déco",     fn: () => doAdminLogout() },
       ]
     : [
         { l: "Voter",    fn: () => { state.view = "voter";   render(); }, active: state.view === "voter" },
@@ -413,24 +425,46 @@ function renderAdminModal() {
   const wrap = el("div", "", null, { style: "position:relative;min-height:260px;margin-top:8px" });
   const bg = el("div", "modal-bg");
   const modal = el("div", "modal");
-  const inp = el("input", "input"); inp.type = "password"; inp.placeholder = "Mot de passe"; inp.value = state.pwInput;
+  modal.innerHTML = `<div class="modal-title">Accès animateur</div><div class="modal-sub">Entrez le mot de passe pour accéder aux outils d'animation.</div>`;
+
+  // Champ mot de passe + bouton œil
+  const pwWrap = el("div", "", null, { style: "position:relative" });
+  const inp = el("input", "input");
+  inp.type = state.showPw ? "text" : "password";
+  inp.placeholder = "Mot de passe";
+  inp.value = state.pwInput;
+  inp.style.paddingRight = "44px";
   inp.oninput = e => { state.pwInput = e.target.value; state.pwError = false; };
   inp.onkeydown = e => { if (e.key === "Enter") doAdminLogin(); };
-  modal.innerHTML = `<div class="modal-title">Accès animateur</div><div class="modal-sub">Entrez le mot de passe pour accéder aux outils d'animation.</div>`;
-  modal.appendChild(inp);
+  const eyeBtn = el("button", "", state.showPw ? "🙈" : "👁", {
+    style: "position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;padding:0;line-height:1"
+  });
+  eyeBtn.onclick = () => { state.showPw = !state.showPw; render(); };
+  pwWrap.appendChild(inp); pwWrap.appendChild(eyeBtn);
+  modal.appendChild(pwWrap);
+
   if (state.pwError) { const err = el("div", "", "Mot de passe incorrect.", { style: "font-size:13px;color:#a32d2d;margin-top:8px" }); modal.appendChild(err); }
   const btns = el("div", "", null, { style: "display:flex;gap:8px;margin-top:12px" });
   const ok = el("button", "btn btn-primary btn-inline", "Connexion"); ok.onclick = doAdminLogin;
-  const cancel = el("button", "btn btn-inline", "Annuler"); cancel.onclick = () => { state.modal = null; state.pwInput = ""; state.pwError = false; render(); };
+  const cancel = el("button", "btn btn-inline", "Annuler"); cancel.onclick = () => { state.modal = null; state.pwInput = ""; state.pwError = false; state.showPw = false; render(); };
   btns.appendChild(ok); btns.appendChild(cancel);
   modal.appendChild(btns);
   bg.appendChild(modal); wrap.appendChild(bg);
   setTimeout(() => inp.focus(), 50);
   return wrap;
 }
+function doAdminLogout() {
+  state.adminMode = false;
+  localStorage.removeItem("ecclesia_admin");
+  state.view = "voter";
+  loadAssertions().then(render);
+}
+
 function doAdminLogin() {
   if (state.pwInput === ADMIN_PASSWORD) {
-    state.adminMode = true; state.modal = null; state.pwInput = "";
+    state.adminMode = true;
+    localStorage.setItem("ecclesia_admin", "true");
+    state.modal = null; state.pwInput = ""; state.showPw = false;
     state.view = "admin"; state.adminTab = "stats";
     loadAllAssertions().then(render);
   } else { state.pwError = true; render(); }
@@ -460,7 +494,6 @@ function renderVoter() {
     <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
     <div class="assertion-card">
       <div class="assertion-text">${cur.text}</div>
-      <div class="assertion-author">Proposé par ${cur.author}</div>
       <div class="vote-buttons">
         <button class="btn btn-agree" id="v-accord">✓ Accord</button>
         <button class="btn btn-disagree" id="v-desaccord">✗ Désaccord</button>
@@ -496,7 +529,7 @@ function renderResults() {
       ${statRow("Accord",    pct(a.nb_accord),    "#639922", "#3b6d11")}
       ${statRow("Désaccord", pct(a.nb_desaccord), "#e24b4a", "#791f1f")}
       ${statRow("Passé",     pct(a.nb_passe),     "#b4b2a9", "#5f5e5a")}
-      <div style="font-size:11px;color:#bbb;margin-top:4px">${t} vote${t!==1?"s":""} · par ${a.author}</div>
+      <div style="font-size:11px;color:#bbb;margin-top:4px">${t} vote${t!==1?"s":""}</div>
     `;
     wrap.appendChild(item);
   });
@@ -701,7 +734,12 @@ function statRow(lbl, pct, fill, color) {
 // ── Démarrage ────────────────────────────────────────────
 async function init() {
   render(); // affiche le loader
-  await Promise.all([loadAssertions(), loadConfig()]);
+  await Promise.all([loadAssertions(), loadConfig(), loadMyVotes()]);
+  // Si adminMode persisté, charger toutes les assertions
+  if (state.adminMode) {
+    state.view = "admin";
+    await loadAllAssertions();
+  }
   state.loading = false;
   subscribeRealtime();
   render();
