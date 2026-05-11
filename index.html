@@ -118,6 +118,18 @@
 
   .realtime-dot { width: 7px; height: 7px; background: #639922; border-radius: 50%; display: inline-block; margin-right: 5px; animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Politique de modération ── */
+  .policy-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .policy-btn { border: 2px solid #e5e3de; border-radius: 10px; padding: 10px 8px; text-align: center; cursor: pointer; background: white; font-family: inherit; transition: all 0.15s; }
+  .policy-btn:hover { border-color: #bbb; background: #f8f7f4; }
+  .policy-btn.active-open   { border-color: #639922; background: #eaf3de; }
+  .policy-btn.active-closed { border-color: #c08000; background: #faeeda; }
+  .policy-btn.active-ai     { border-color: #7f77dd; background: #f0effe; }
+  .policy-btn.disabled-btn  { opacity: 0.45; cursor: not-allowed; }
+  .policy-icon { font-size: 20px; margin-bottom: 4px; }
+  .policy-label { font-size: 12px; font-weight: 600; display: block; }
+  .policy-desc  { font-size: 10px; color: #888; display: block; margin-top: 2px; line-height: 1.3; }
 </style>
 </head>
 <body>
@@ -132,7 +144,7 @@
 
 <script>
 // ─── Constantes ───────────────────────────────────────────
-const ADMIN_PASSWORD = "Pierre-Yves-Richard"; // modifiable ici
+const ADMIN_PASSWORD = "ecclesia2025"; // ← À CHANGER avant déploiement
 
 // ─── Client Supabase ──────────────────────────────────────
 const { createClient } = supabase;
@@ -140,21 +152,22 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ─── État global ──────────────────────────────────────────
 let state = {
-  pseudo:      localStorage.getItem("ecclesia_pseudo") || "",
-  pseudoInput: "",
-  view:        "voter",
-  adminTab:    "stats",
-  assertions:  [],
-  myVotes:     JSON.parse(localStorage.getItem("ecclesia_votes") || "{}"),
-  adminMode:   false,
-  modal:       null,
-  pwInput:     "",
-  pwError:     false,
-  newA:        "",
-  mergeTargets:[],
-  aiResult:    null,
-  aiLoading:   false,
-  loading:     true,
+  pseudo:           localStorage.getItem("ecclesia_pseudo") || "",
+  pseudoInput:      "",
+  view:             "voter",
+  adminTab:         "stats",
+  assertions:       [],
+  myVotes:          JSON.parse(localStorage.getItem("ecclesia_votes") || "{}"),
+  adminMode:        false,
+  modal:            null,
+  pwInput:          "",
+  pwError:          false,
+  newA:             "",
+  mergeTargets:     [],
+  aiResult:         null,
+  aiLoading:        false,
+  loading:          true,
+  moderationPolicy: "closed", // "open" | "closed" | "ai"
 };
 
 // ─── Utilitaires ─────────────────────────────────────────
@@ -172,6 +185,18 @@ function csLabel(s) {
 }
 function saveVotes() { localStorage.setItem("ecclesia_votes", JSON.stringify(state.myVotes)); }
 
+// ─── Chargement config ────────────────────────────────────
+async function loadConfig() {
+  const { data } = await db.from("config").select("value").eq("key", "moderation_policy").single();
+  if (data) state.moderationPolicy = data.value;
+}
+
+async function setPolicy(policy) {
+  await db.from("config").update({ value: policy }).eq("key", "moderation_policy");
+  state.moderationPolicy = policy;
+  render();
+}
+
 // ─── Chargement des données depuis Supabase ───────────────
 async function loadAssertions() {
   const { data, error } = await db
@@ -179,23 +204,18 @@ async function loadAssertions() {
     .select("*")
     .eq("status", "approved")
     .order("created_at", { ascending: true });
-  if (!error && data) {
-    state.assertions = data;
-  }
+  if (!error && data) state.assertions = data;
 }
 
 async function loadAllAssertions() {
-  // Pour l'animateur : charge toutes les assertions (tous statuts)
   const { data, error } = await db
     .from("assertion_stats")
     .select("*")
     .order("created_at", { ascending: true });
-  if (!error && data) {
-    state.assertions = data;
-  }
+  if (!error && data) state.assertions = data;
 }
 
-// ─── Temps réel : écoute les changements ────────────────
+// ─── Temps réel ──────────────────────────────────────────
 function subscribeRealtime() {
   db.channel("ecclesia-changes")
     .on("postgres_changes", { event: "*", schema: "public", table: "assertions" }, async () => {
@@ -208,6 +228,10 @@ function subscribeRealtime() {
       else await loadAssertions();
       render();
     })
+    .on("postgres_changes", { event: "*", schema: "public", table: "config" }, async () => {
+      await loadConfig();
+      render();
+    })
     .subscribe();
 }
 
@@ -216,10 +240,7 @@ async function handleVote(assertionId, vote) {
   state.myVotes[assertionId] = vote;
   saveVotes();
   const { error } = await db.from("votes").insert({ assertion_id: assertionId, pseudo: state.pseudo, vote });
-  if (error) {
-    // Si déjà voté côté serveur (conflit UNIQUE), on ignore
-    console.warn("Vote déjà enregistré ou erreur:", error.message);
-  }
+  if (error) console.warn("Vote déjà enregistré ou erreur:", error.message);
   await loadAssertions();
   render();
 }
@@ -227,10 +248,15 @@ async function handleVote(assertionId, vote) {
 async function handleSubmit() {
   const text = state.newA.trim();
   if (!text) return;
-  const { error } = await db.from("assertions").insert({ text, author: state.pseudo, status: "pending" });
+  // Politique ouverte → approuvée directement ; sinon → en attente
+  const status = state.moderationPolicy === "open" ? "approved" : "pending";
+  const { error } = await db.from("assertions").insert({ text, author: state.pseudo, status });
   if (!error) {
     state.newA = "";
-    alert("Assertion soumise — elle sera visible après validation par l'animateur.");
+    const msg = state.moderationPolicy === "open"
+      ? "Assertion publiée directement — politique ouverte active."
+      : "Assertion soumise — elle sera visible après validation par l'animateur.";
+    alert(msg);
   } else {
     alert("Erreur lors de la soumission : " + error.message);
   }
@@ -238,13 +264,9 @@ async function handleSubmit() {
 }
 
 async function handleModerate(id, newStatus) {
-  // Utilise la clé anon + RLS : cette action échoue si pas de policy UPDATE
-  // → Pour la modération, on utilise la clé service_role via une fonction Supabase Edge
-  // Alternative simple : désactiver RLS sur UPDATE pour les animateurs authentifiés
-  // Pour la démo, on fait un appel direct (fonctionne si RLS UPDATE est ouvert)
   const { error } = await db.from("assertions").update({ status: newStatus }).eq("id", id);
   if (error) {
-    alert("Erreur de modération : " + error.message + "\n\nVérifiez que la policy RLS UPDATE est configurée.");
+    alert("Erreur de modération : " + error.message);
   } else {
     await loadAllAssertions();
     render();
@@ -270,10 +292,8 @@ async function handleAiMerge() {
 
 async function handleApplyMerge() {
   const ids = state.mergeTargets;
-  // Insérer la nouvelle assertion fusionnée
-  const { data: newA, error: e1 } = await db.from("assertions").insert({ text: state.aiResult, author: "Fusion IA", status: "approved" }).select().single();
+  const { error: e1 } = await db.from("assertions").insert({ text: state.aiResult, author: "Fusion IA", status: "approved" }).select().single();
   if (e1) { alert("Erreur: " + e1.message); return; }
-  // Rejeter les assertions fusionnées
   for (const id of ids) {
     await db.from("assertions").update({ status: "rejected" }).eq("id", id);
   }
@@ -281,7 +301,7 @@ async function handleApplyMerge() {
   await loadAllAssertions(); render();
 }
 
-// ─── Rendu ───────────────────────────────────────────────
+// ─── Rendu principal ─────────────────────────────────────
 function render() {
   const root = document.getElementById("app");
   root.innerHTML = "";
@@ -311,6 +331,7 @@ function render() {
     if (state.adminTab === "stats")    app.appendChild(renderAdminStats());
     if (state.adminTab === "moderate") app.appendChild(renderAdminMod());
     if (state.adminTab === "merge")    app.appendChild(renderAdminMerge());
+    if (state.adminTab === "policy")   app.appendChild(renderAdminPolicy());
   }
 
   root.appendChild(app);
@@ -366,7 +387,8 @@ function renderTabs() {
     ? [
         { l: "← Retour", fn: () => { state.view = "voter"; loadAssertions().then(render); } },
         { l: "Stats",       fn: () => { state.adminTab = "stats";    render(); }, active: state.adminTab === "stats" },
-        { l: `Modération${pending > 0 ? " ("+pending+")" : ""}`, fn: () => { state.adminTab = "moderate"; render(); }, active: state.adminTab === "moderate" },
+        { l: `Modérer${pending > 0 ? " ("+pending+")" : ""}`, fn: () => { state.adminTab = "moderate"; render(); }, active: state.adminTab === "moderate" },
+        { l: "Politique",   fn: () => { state.adminTab = "policy";   render(); }, active: state.adminTab === "policy" },
         { l: "Fusion IA",   fn: () => { state.adminTab = "merge";    render(); }, active: state.adminTab === "merge" },
       ]
     : [
@@ -486,8 +508,18 @@ function renderSubmit() {
   const wrap = el("div");
   wrap.appendChild(el("div", "section-title", "Proposer une assertion"));
   const card = el("div", "card");
+
+  // Indicateur de politique active
+  const policyInfo = {
+    open:   { text: "Politique ouverte — votre assertion sera publiée immédiatement.", color: "#3b6d11", bg: "#eaf3de", border: "#c0dd97" },
+    closed: { text: "Politique fermée — votre assertion sera soumise à validation avant d'être visible.", color: "#633806", bg: "#faeeda", border: "#f5d4a0" },
+    ai:     { text: "Politique IA — votre assertion sera vérifiée automatiquement (à venir).", color: "#26215c", bg: "#f0effe", border: "#afa9ec" },
+  };
+  const pi = policyInfo[state.moderationPolicy] || policyInfo.closed;
   card.innerHTML = `
-    <div class="info-box">Une assertion doit être <strong>affirmative, courte et débattable</strong>. Elle sera soumise à validation avant d'être visible par tous.</div>
+    <div style="background:${pi.bg};border:1px solid ${pi.border};border-radius:8px;padding:10px 14px;font-size:13px;color:${pi.color};margin-bottom:14px;line-height:1.5">
+      ${pi.text}<br><strong>Une assertion doit être affirmative, courte et débattable.</strong>
+    </div>
     <label class="label">Votre assertion</label>
   `;
   const ta = el("textarea", "input textarea"); ta.placeholder = "ex. L'intelligence artificielle transformera fondamentalement nos démocraties.";
@@ -560,6 +592,62 @@ function renderAdminMod() {
   return wrap;
 }
 
+// ── Admin : Politique de modération ─────────────────────
+function renderAdminPolicy() {
+  const wrap = el("div");
+  wrap.appendChild(el("div", "section-title", "Politique de modération des soumissions"));
+
+  const policies = [
+    {
+      key: "open",
+      icon: "🟢",
+      label: "Ouverte",
+      desc: "Toutes les propositions sont publiées immédiatement",
+      activeClass: "active-open",
+      disabled: false,
+    },
+    {
+      key: "closed",
+      icon: "🔒",
+      label: "Fermée",
+      desc: "Chaque proposition doit être validée par l'animateur",
+      activeClass: "active-closed",
+      disabled: false,
+    },
+    {
+      key: "ai",
+      icon: "🤖",
+      label: "IA",
+      desc: "Vérification automatique par LLM (à venir)",
+      activeClass: "active-ai",
+      disabled: true,
+    },
+  ];
+
+  const grid = el("div", "policy-grid");
+  policies.forEach(p => {
+    const isActive = state.moderationPolicy === p.key;
+    const cls = ["policy-btn", isActive ? p.activeClass : "", p.disabled ? "disabled-btn" : ""].filter(Boolean).join(" ");
+    const btn = el("div", cls);
+    btn.innerHTML = `<div class="policy-icon">${p.icon}</div><span class="policy-label">${p.label}</span><span class="policy-desc">${p.desc}</span>`;
+    if (!p.disabled) btn.onclick = () => setPolicy(p.key);
+    grid.appendChild(btn);
+  });
+  wrap.appendChild(grid);
+
+  // Description de l'état actuel
+  const descriptions = {
+    open:   "Les participants peuvent soumettre des assertions qui apparaissent immédiatement dans le vote, sans validation préalable. Idéal pour des sessions de confiance ou des groupes restreints.",
+    closed: "Toute nouvelle assertion passe en file d'attente. L'animateur doit valider chaque soumission avant qu'elle ne soit visible par les votants. Mode recommandé par défaut.",
+    ai:     "Fonctionnalité à venir — un LLM vérifiera automatiquement que l'assertion respecte les critères (affirmative, débattable, hors propos interdits) avant publication.",
+  };
+  const desc = el("div", "card", null, { style: "margin-top:4px" });
+  desc.innerHTML = `<div style="font-size:13px;color:#555;line-height:1.6">${descriptions[state.moderationPolicy] || ""}</div>`;
+  wrap.appendChild(desc);
+
+  return wrap;
+}
+
 // ── Admin : Fusion IA ────────────────────────────────────
 function renderAdminMerge() {
   const approved = state.assertions.filter(a => a.status === "approved");
@@ -613,7 +701,7 @@ function statRow(lbl, pct, fill, color) {
 // ── Démarrage ────────────────────────────────────────────
 async function init() {
   render(); // affiche le loader
-  await loadAssertions();
+  await Promise.all([loadAssertions(), loadConfig()]);
   state.loading = false;
   subscribeRealtime();
   render();
