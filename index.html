@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ecclesia — Délibération CentraleSupélec</title>
+
+<!-- ═══════════════════════════════════════════════════════════
+     CONFIGURATION SUPABASE
+     Remplace les deux valeurs ci-dessous après avoir créé
+     ton projet Supabase (Settings → API)
+     ══════════════════════════════════════════════════════════ -->
+<script>
+  const SUPABASE_URL = "https://kbynzqwwzqyipswfwebe.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_RXQA7pRK4DEpcFXmx6cTAw_8MuHkYsE";
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #f8f7f4; color: #1a1a1a; min-height: 100vh; }
+  .app { max-width: 480px; margin: 0 auto; padding: 16px; min-height: 100vh; }
+
+  .header { display: flex; align-items: center; gap: 10px; padding: 16px 0 20px; border-bottom: 1px solid #e5e3de; margin-bottom: 20px; }
+  .logo { width: 36px; height: 36px; background: #1a1a1a; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 16px; flex-shrink: 0; }
+  .header-title { font-size: 17px; font-weight: 600; }
+  .header-sub { font-size: 12px; color: #888; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .pseudo-badge { font-size: 12px; background: #f0efe9; border: 1px solid #e0dfd9; border-radius: 20px; padding: 4px 10px; color: #555; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 18px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid #d0cfc9; background: white; color: #1a1a1a; transition: all 0.15s; width: 100%; font-family: inherit; }
+  .btn:hover { background: #f5f4f0; }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+  .btn-primary { background: #1a1a1a; color: white; border-color: #1a1a1a; }
+  .btn-primary:hover { background: #333; }
+  .btn-agree { background: #eaf3de; border-color: #c0dd97; color: #3b6d11; }
+  .btn-agree:hover { background: #d5eab8; }
+  .btn-disagree { background: #fcebeb; border-color: #f7c1c1; color: #791f1f; }
+  .btn-disagree:hover { background: #f5d0d0; }
+  .btn-pass { background: #f8f7f4; border-color: #d0cfc9; color: #666; }
+  .btn-pass:hover { background: #eeecea; }
+  .btn-danger { background: #fcebeb; border-color: #f7c1c1; color: #791f1f; }
+  .btn-danger:hover { background: #f5d0d0; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; width: auto; }
+  .btn-inline { width: auto; }
+
+  .card { background: white; border: 1px solid #e5e3de; border-radius: 12px; padding: 20px; margin-bottom: 12px; }
+  .input { width: 100%; padding: 10px 14px; border: 1px solid #d0cfc9; border-radius: 8px; font-size: 15px; font-family: inherit; background: white; color: #1a1a1a; outline: none; }
+  .input:focus { border-color: #888; }
+  .textarea { min-height: 80px; resize: vertical; }
+  .label { font-size: 13px; color: #555; margin-bottom: 6px; display: block; }
+  .info-box { background: #faeeda; border: 1px solid #f5d4a0; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #633806; margin-bottom: 16px; line-height: 1.5; }
+  .info-box strong { font-weight: 600; }
+
+  .progress-bar { height: 4px; background: #eeecea; border-radius: 2px; overflow: hidden; margin-bottom: 20px; }
+  .progress-fill { height: 100%; background: #1a1a1a; border-radius: 2px; transition: width 0.3s; }
+
+  .assertion-card { background: white; border: 1px solid #e5e3de; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+  .assertion-text { font-size: 17px; line-height: 1.6; margin-bottom: 8px; }
+  .assertion-author { font-size: 12px; color: #aaa; margin-bottom: 20px; }
+  .vote-buttons { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+  .stat-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .stat-label { font-size: 12px; color: #555; width: 72px; flex-shrink: 0; }
+  .stat-bar-bg { flex: 1; height: 8px; background: #f0efe9; border-radius: 4px; overflow: hidden; }
+  .stat-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+  .stat-pct { font-size: 13px; font-weight: 500; width: 36px; text-align: right; flex-shrink: 0; }
+
+  .consensus-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+  .c-high { background: #eaf3de; color: #3b6d11; }
+  .c-mid { background: #faeeda; color: #633806; }
+  .c-low { background: #fcebeb; color: #791f1f; }
+
+  .tabs { display: flex; gap: 4px; background: #f0efe9; border-radius: 8px; padding: 3px; margin-bottom: 20px; }
+  .tab { flex: 1; padding: 7px 0; text-align: center; font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: #666; border: none; background: none; font-family: inherit; }
+  .tab.active { background: white; color: #1a1a1a; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+
+  .separator { height: 1px; background: #e5e3de; margin: 16px 0; }
+  .empty-state { text-align: center; padding: 32px 16px; color: #aaa; font-size: 14px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+  .badge-admin { background: #eeedfe; color: #26215c; }
+
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: flex-end; z-index: 100; }
+  .modal { background: white; border-radius: 16px 16px 0 0; padding: 24px; width: 100%; max-height: 85vh; overflow-y: auto; }
+  .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .modal-sub { font-size: 13px; color: #888; margin-bottom: 16px; }
+
+  .ai-result { background: #f0effe; border: 1px solid #afa9ec; border-radius: 8px; padding: 14px; font-size: 13px; color: #26215c; line-height: 1.6; margin-top: 12px; }
+  .ai-result-label { font-size: 11px; font-weight: 600; color: #534ab7; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-screen { display: flex; align-items: center; justify-content: center; min-height: 60vh; flex-direction: column; gap: 16px; color: #888; font-size: 14px; }
+
+  .vote-done { text-align: center; padding: 48px 24px; }
+  .vote-done h2 { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+  .vote-done p { font-size: 14px; color: #888; margin-bottom: 24px; line-height: 1.6; }
+
+  .results-item { padding: 16px 0; border-bottom: 1px solid #f0efe9; }
+  .results-item:last-child { border-bottom: none; }
+  .results-text { font-size: 15px; margin-bottom: 10px; line-height: 1.5; }
+  .results-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+
+  .section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #aaa; margin-bottom: 14px; }
+
+  .onboarding { padding-top: 48px; padding-bottom: 32px; }
+  .onboarding-logo { width: 52px; height: 52px; background: #1a1a1a; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: white; font-size: 22px; font-weight: 700; margin-bottom: 20px; }
+  .onboarding h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+  .onboarding p { font-size: 15px; color: #888; margin-bottom: 28px; }
+
+  .checkbox-card { cursor: pointer; border: 1px solid #e5e3de; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start; transition: all 0.15s; }
+  .checkbox-card.selected { border-color: #7f77dd; background: #f5f4fe; }
+  .checkbox-box { width: 16px; height: 16px; border: 1.5px solid #ccc; border-radius: 3px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+  .checkbox-card.selected .checkbox-box { background: #7f77dd; border-color: #7f77dd; color: white; font-size: 10px; }
+  .checkbox-text { font-size: 14px; line-height: 1.5; }
+
+  .realtime-dot { width: 7px; height: 7px; background: #639922; border-radius: 50%; display: inline-block; margin-right: 5px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="app">
+    <div class="loading-screen">
+      <span class="spinner"></span>
+      Connexion à Supabase…
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Constantes ───────────────────────────────────────────
+const ADMIN_PASSWORD = "ecclesia2025"; // modifiable ici
+
+// ─── Client Supabase ──────────────────────────────────────
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ─── État global ──────────────────────────────────────────
+let state = {
+  pseudo:      localStorage.getItem("ecclesia_pseudo") || "",
+  pseudoInput: "",
+  view:        "voter",
+  adminTab:    "stats",
+  assertions:  [],
+  myVotes:     JSON.parse(localStorage.getItem("ecclesia_votes") || "{}"),
+  adminMode:   false,
+  modal:       null,
+  pwInput:     "",
+  pwError:     false,
+  newA:        "",
+  mergeTargets:[],
+  aiResult:    null,
+  aiLoading:   false,
+  loading:     true,
+};
+
+// ─── Utilitaires ─────────────────────────────────────────
+function calcConsensus(a) {
+  const t = a.nb_accord + a.nb_desaccord + a.nb_passe;
+  if (!t) return 0;
+  const p = Math.abs(a.nb_accord/t - a.nb_desaccord/t);
+  const part = (a.nb_accord + a.nb_desaccord) / t;
+  return Math.round((1 - p) * part * 100);
+}
+function csLabel(s) {
+  if (s >= 60) return { l: "Fort consensus", c: "c-high" };
+  if (s >= 35) return { l: "Consensus moyen", c: "c-mid" };
+  return { l: "Pas de consensus", c: "c-low" };
+}
+function saveVotes() { localStorage.setItem("ecclesia_votes", JSON.stringify(state.myVotes)); }
+
+// ─── Chargement des données depuis Supabase ───────────────
+async function loadAssertions() {
+  const { data, error } = await db
+    .from("assertion_stats")
+    .select("*")
+    .eq("status", "approved")
+    .order("created_at", { ascending: true });
+  if (!error && data) {
+    state.assertions = data;
+  }
+}
+
+async function loadAllAssertions() {
+  // Pour l'animateur : charge toutes les assertions (tous statuts)
+  const { data, error } = await db
+    .from("assertion_stats")
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (!error && data) {
+    state.assertions = data;
+  }
+}
+
+// ─── Temps réel : écoute les changements ────────────────
+function subscribeRealtime() {
+  db.channel("ecclesia-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "assertions" }, async () => {
+      if (state.adminMode) await loadAllAssertions();
+      else await loadAssertions();
+      render();
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "votes" }, async () => {
+      if (state.adminMode) await loadAllAssertions();
+      else await loadAssertions();
+      render();
+    })
+    .subscribe();
+}
+
+// ─── Actions ─────────────────────────────────────────────
+async function handleVote(assertionId, vote) {
+  state.myVotes[assertionId] = vote;
+  saveVotes();
+  const { error } = await db.from("votes").insert({ assertion_id: assertionId, pseudo: state.pseudo, vote });
+  if (error) {
+    // Si déjà voté côté serveur (conflit UNIQUE), on ignore
+    console.warn("Vote déjà enregistré ou erreur:", error.message);
+  }
+  await loadAssertions();
+  render();
+}
+
+async function handleSubmit() {
+  const text = state.newA.trim();
+  if (!text) return;
+  const { error } = await db.from("assertions").insert({ text, author: state.pseudo, status: "pending" });
+  if (!error) {
+    state.newA = "";
+    alert("Assertion soumise — elle sera visible après validation par l'animateur.");
+  } else {
+    alert("Erreur lors de la soumission : " + error.message);
+  }
+  render();
+}
+
+async function handleModerate(id, newStatus) {
+  // Utilise la clé anon + RLS : cette action échoue si pas de policy UPDATE
+  // → Pour la modération, on utilise la clé service_role via une fonction Supabase Edge
+  // Alternative simple : désactiver RLS sur UPDATE pour les animateurs authentifiés
+  // Pour la démo, on fait un appel direct (fonctionne si RLS UPDATE est ouvert)
+  const { error } = await db.from("assertions").update({ status: newStatus }).eq("id", id);
+  if (error) {
+    alert("Erreur de modération : " + error.message + "\n\nVérifiez que la policy RLS UPDATE est configurée.");
+  } else {
+    await loadAllAssertions();
+    render();
+  }
+}
+
+async function handleAiMerge() {
+  const sel = state.assertions.filter(a => state.mergeTargets.includes(a.id));
+  if (sel.length < 2) return;
+  state.aiLoading = true; state.aiResult = null; render();
+  try {
+    const prompt = `Tu es un assistant pour un club de débat. Voici ${sel.length} assertions similaires à fusionner en une seule, claire et neutre :\n\n${sel.map((a, i) => `${i+1}. "${a.text}"`).join("\n")}\n\nPropose une seule assertion fusionnée, concise (1-2 phrases max), qui capture l'essence commune. Réponds uniquement avec l'assertion, sans guillemets ni explication.`;
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content: prompt }] })
+    });
+    const data = await res.json();
+    state.aiResult = (data.content?.find(b => b.type === "text")?.text || "Erreur.").trim();
+  } catch { state.aiResult = "Erreur de connexion à l'API Anthropic."; }
+  state.aiLoading = false; render();
+}
+
+async function handleApplyMerge() {
+  const ids = state.mergeTargets;
+  // Insérer la nouvelle assertion fusionnée
+  const { data: newA, error: e1 } = await db.from("assertions").insert({ text: state.aiResult, author: "Fusion IA", status: "approved" }).select().single();
+  if (e1) { alert("Erreur: " + e1.message); return; }
+  // Rejeter les assertions fusionnées
+  for (const id of ids) {
+    await db.from("assertions").update({ status: "rejected" }).eq("id", id);
+  }
+  state.mergeTargets = []; state.aiResult = null;
+  await loadAllAssertions(); render();
+}
+
+// ─── Rendu ───────────────────────────────────────────────
+function render() {
+  const root = document.getElementById("app");
+  root.innerHTML = "";
+  const app = document.createElement("div");
+  app.className = "app";
+
+  if (state.loading) {
+    app.innerHTML = `<div class="loading-screen"><span class="spinner"></span> Connexion à Supabase…</div>`;
+    root.appendChild(app); return;
+  }
+
+  if (!state.pseudo) { app.appendChild(renderOnboard()); root.appendChild(app); return; }
+
+  app.appendChild(renderHeader());
+
+  if (state.modal === "admin-login") {
+    app.appendChild(renderAdminModal());
+    root.appendChild(app); return;
+  }
+
+  app.appendChild(renderTabs());
+
+  if (state.view === "voter")   app.appendChild(renderVoter());
+  if (state.view === "results") app.appendChild(renderResults());
+  if (state.view === "submit")  app.appendChild(renderSubmit());
+  if (state.view === "admin") {
+    if (state.adminTab === "stats")    app.appendChild(renderAdminStats());
+    if (state.adminTab === "moderate") app.appendChild(renderAdminMod());
+    if (state.adminTab === "merge")    app.appendChild(renderAdminMerge());
+  }
+
+  root.appendChild(app);
+}
+
+// ── Écran de connexion ───────────────────────────────────
+function renderOnboard() {
+  const wrap = el("div", "onboarding");
+  const inp = el("input", "input"); inp.placeholder = "ex. alice_cs"; inp.value = state.pseudoInput;
+  inp.oninput = e => state.pseudoInput = e.target.value;
+  inp.onkeydown = e => { if (e.key === "Enter") doLogin(); };
+  wrap.innerHTML = `
+    <div class="onboarding-logo">⊕</div>
+    <h1>Ecclesia</h1>
+    <p>Plateforme de délibération · CentraleSupélec</p>
+    <div class="info-box"><strong>⚠ Important :</strong> Utilisez toujours le <strong>même pseudo</strong> à chaque session pour que vos votes soient correctement identifiés.</div>
+    <label class="label">Votre pseudo</label>
+  `;
+  wrap.appendChild(inp);
+  wrap.appendChild(el("div", "", null, { style: "height:10px" }));
+  const btn = el("button", "btn btn-primary", "Entrer dans l'Assemblée →");
+  btn.onclick = doLogin;
+  wrap.appendChild(btn);
+  return wrap;
+}
+function doLogin() {
+  const p = (state.pseudoInput || "").trim();
+  if (!p) return;
+  localStorage.setItem("ecclesia_pseudo", p);
+  state.pseudo = p;
+  render();
+}
+
+// ── Header ───────────────────────────────────────────────
+function renderHeader() {
+  const h = el("div", "header");
+  h.innerHTML = `
+    <div class="logo">⊕</div>
+    <div><div class="header-title">Ecclesia</div><div class="header-sub">CentraleSupélec</div></div>
+    <div class="header-right">
+      <span class="pseudo-badge">👤 ${state.pseudo}</span>
+      ${state.adminMode ? '<span class="badge badge-admin">Animateur</span>' : ""}
+      <span style="font-size:12px;color:#aaa"><span class="realtime-dot"></span>Live</span>
+    </div>
+  `;
+  return h;
+}
+
+// ── Tabs ─────────────────────────────────────────────────
+function renderTabs() {
+  const pending = state.assertions.filter(a => a.status === "pending").length;
+  const tabs = state.view === "admin"
+    ? [
+        { l: "← Retour", fn: () => { state.view = "voter"; loadAssertions().then(render); } },
+        { l: "Stats",       fn: () => { state.adminTab = "stats";    render(); }, active: state.adminTab === "stats" },
+        { l: `Modération${pending > 0 ? " ("+pending+")" : ""}`, fn: () => { state.adminTab = "moderate"; render(); }, active: state.adminTab === "moderate" },
+        { l: "Fusion IA",   fn: () => { state.adminTab = "merge";    render(); }, active: state.adminTab === "merge" },
+      ]
+    : [
+        { l: "Voter",    fn: () => { state.view = "voter";   render(); }, active: state.view === "voter" },
+        { l: "Résultats",fn: () => { state.view = "results"; render(); }, active: state.view === "results" },
+        { l: "Proposer", fn: () => { state.view = "submit";  render(); }, active: state.view === "submit" },
+        state.adminMode
+          ? { l: "⚙ Animer", fn: () => { state.view = "admin"; loadAllAssertions().then(render); }, active: state.view === "admin" }
+          : { l: "🔒 Animer", fn: () => { state.modal = "admin-login"; render(); } }
+      ];
+  const wrap = el("div", "tabs");
+  tabs.forEach(t => {
+    const btn = el("button", "tab" + (t.active ? " active" : ""), t.l);
+    btn.onclick = t.fn;
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
+// ── Modal animateur ──────────────────────────────────────
+function renderAdminModal() {
+  const wrap = el("div", "", null, { style: "position:relative;min-height:260px;margin-top:8px" });
+  const bg = el("div", "modal-bg");
+  const modal = el("div", "modal");
+  const inp = el("input", "input"); inp.type = "password"; inp.placeholder = "Mot de passe"; inp.value = state.pwInput;
+  inp.oninput = e => { state.pwInput = e.target.value; state.pwError = false; };
+  inp.onkeydown = e => { if (e.key === "Enter") doAdminLogin(); };
+  modal.innerHTML = `<div class="modal-title">Accès animateur</div><div class="modal-sub">Entrez le mot de passe pour accéder aux outils d'animation.</div>`;
+  modal.appendChild(inp);
+  if (state.pwError) { const err = el("div", "", "Mot de passe incorrect.", { style: "font-size:13px;color:#a32d2d;margin-top:8px" }); modal.appendChild(err); }
+  const btns = el("div", "", null, { style: "display:flex;gap:8px;margin-top:12px" });
+  const ok = el("button", "btn btn-primary btn-inline", "Connexion"); ok.onclick = doAdminLogin;
+  const cancel = el("button", "btn btn-inline", "Annuler"); cancel.onclick = () => { state.modal = null; state.pwInput = ""; state.pwError = false; render(); };
+  btns.appendChild(ok); btns.appendChild(cancel);
+  modal.appendChild(btns);
+  bg.appendChild(modal); wrap.appendChild(bg);
+  setTimeout(() => inp.focus(), 50);
+  return wrap;
+}
+function doAdminLogin() {
+  if (state.pwInput === ADMIN_PASSWORD) {
+    state.adminMode = true; state.modal = null; state.pwInput = "";
+    state.view = "admin"; state.adminTab = "stats";
+    loadAllAssertions().then(render);
+  } else { state.pwError = true; render(); }
+}
+
+// ── Vue Voter ────────────────────────────────────────────
+function renderVoter() {
+  const approved = state.assertions.filter(a => a.status === "approved");
+  const unvoted  = approved.filter(a => !state.myVotes[a.id]);
+  const cur = unvoted[0] || null;
+  if (!cur) {
+    const wrap = el("div", "vote-done");
+    wrap.innerHTML = `<div style="font-size:52px;margin-bottom:16px">✓</div><h2>Tout voté !</h2><p>Vous avez voté sur toutes les assertions disponibles.</p>`;
+    const btn = el("button", "btn btn-primary", "Voir les résultats →");
+    btn.onclick = () => { state.view = "results"; render(); };
+    wrap.appendChild(btn);
+    return wrap;
+  }
+  const done = approved.length - unvoted.length;
+  const pct = Math.round(done / approved.length * 100);
+  const wrap = el("div");
+  wrap.innerHTML = `
+    <div style="display:flex;justify-content:space-between;font-size:13px;color:#888;margin-bottom:8px">
+      <span>${unvoted.length} restante${unvoted.length > 1 ? "s" : ""}</span>
+      <span>${done}/${approved.length}</span>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+    <div class="assertion-card">
+      <div class="assertion-text">${cur.text}</div>
+      <div class="assertion-author">Proposé par ${cur.author}</div>
+      <div class="vote-buttons">
+        <button class="btn btn-agree" id="v-accord">✓ Accord</button>
+        <button class="btn btn-disagree" id="v-desaccord">✗ Désaccord</button>
+        <button class="btn btn-pass" id="v-passe">— Passer</button>
+      </div>
+    </div>
+  `;
+  wrap.querySelector("#v-accord").onclick    = () => handleVote(cur.id, "accord");
+  wrap.querySelector("#v-desaccord").onclick = () => handleVote(cur.id, "desaccord");
+  wrap.querySelector("#v-passe").onclick     = () => handleVote(cur.id, "passe");
+  return wrap;
+}
+
+// ── Vue Résultats ────────────────────────────────────────
+function renderResults() {
+  const sorted = [...state.assertions.filter(a => a.status === "approved")]
+    .sort((a, b) => calcConsensus(b) - calcConsensus(a));
+  const wrap = el("div");
+  wrap.appendChild(el("div", "section-title", "Résultats · classement par consensus"));
+  if (!sorted.length) { wrap.appendChild(el("div", "empty-state", "Aucun résultat pour l'instant.")); return wrap; }
+  sorted.forEach((a, i) => {
+    const t = a.nb_accord + a.nb_desaccord + a.nb_passe;
+    const pct = v => t ? Math.round(v / t * 100) : 0;
+    const cs = calcConsensus(a);
+    const { l, c } = csLabel(cs);
+    const item = el("div", "results-item");
+    item.innerHTML = `
+      <div class="results-meta">
+        <span style="font-size:13px;color:#aaa;font-weight:600">#${i+1}</span>
+        <span class="consensus-badge ${c}">${l} · ${cs}%</span>
+      </div>
+      <div class="results-text">${a.text}</div>
+      ${statRow("Accord",    pct(a.nb_accord),    "#639922", "#3b6d11")}
+      ${statRow("Désaccord", pct(a.nb_desaccord), "#e24b4a", "#791f1f")}
+      ${statRow("Passé",     pct(a.nb_passe),     "#b4b2a9", "#5f5e5a")}
+      <div style="font-size:11px;color:#bbb;margin-top:4px">${t} vote${t!==1?"s":""} · par ${a.author}</div>
+    `;
+    wrap.appendChild(item);
+  });
+  return wrap;
+}
+
+// ── Vue Proposer ─────────────────────────────────────────
+function renderSubmit() {
+  const wrap = el("div");
+  wrap.appendChild(el("div", "section-title", "Proposer une assertion"));
+  const card = el("div", "card");
+  card.innerHTML = `
+    <div class="info-box">Une assertion doit être <strong>affirmative, courte et débattable</strong>. Elle sera soumise à validation avant d'être visible par tous.</div>
+    <label class="label">Votre assertion</label>
+  `;
+  const ta = el("textarea", "input textarea"); ta.placeholder = "ex. L'intelligence artificielle transformera fondamentalement nos démocraties.";
+  ta.value = state.newA; ta.oninput = e => state.newA = e.target.value;
+  card.appendChild(ta);
+  card.appendChild(el("div", "", `Soumis sous le pseudo « ${state.pseudo} »`, { style: "font-size:12px;color:#aaa;margin:6px 0 14px" }));
+  const btn = el("button", "btn btn-primary", "Soumettre →"); btn.onclick = handleSubmit;
+  card.appendChild(btn);
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// ── Admin : Stats ────────────────────────────────────────
+function renderAdminStats() {
+  const approved = state.assertions.filter(a => a.status === "approved");
+  const wrap = el("div");
+  wrap.appendChild(el("div", "section-title", "Statistiques des assertions validées"));
+  if (!approved.length) { wrap.appendChild(el("div", "empty-state", "Aucune assertion validée.")); return wrap; }
+  approved.forEach(a => {
+    const t = a.nb_accord + a.nb_desaccord + a.nb_passe;
+    const pct = v => t ? Math.round(v / t * 100) : 0;
+    const cs = calcConsensus(a);
+    const { l, c } = csLabel(cs);
+    const card = el("div", "card");
+    card.innerHTML = `
+      <div style="font-size:14px;font-weight:500;margin-bottom:4px;line-height:1.5">${a.text}</div>
+      <div style="font-size:12px;color:#aaa;margin-bottom:14px">par ${a.author} · ${t} vote${t!==1?"s":""}</div>
+      ${statRow("Accord",    pct(a.nb_accord),    "#639922", "#3b6d11")}
+      ${statRow("Désaccord", pct(a.nb_desaccord), "#e24b4a", "#791f1f")}
+      ${statRow("Passé",     pct(a.nb_passe),     "#b4b2a9", "#5f5e5a")}
+      <div style="margin-top:10px"><span class="consensus-badge ${c}">Consensus : ${cs}% — ${l}</span></div>
+    `;
+    wrap.appendChild(card);
+  });
+  return wrap;
+}
+
+// ── Admin : Modération ───────────────────────────────────
+function renderAdminMod() {
+  const pending  = state.assertions.filter(a => a.status === "pending");
+  const rejected = state.assertions.filter(a => a.status === "rejected");
+  const wrap = el("div");
+  wrap.appendChild(el("div", "section-title", `Soumissions en attente (${pending.length})`));
+  if (!pending.length) wrap.appendChild(el("div", "empty-state", "Aucune soumission à modérer."));
+  pending.forEach(a => {
+    const card = el("div", "card");
+    card.innerHTML = `
+      <div style="font-size:14px;margin-bottom:4px;line-height:1.5">${a.text}</div>
+      <div style="font-size:12px;color:#aaa;margin-bottom:14px">Soumis par ${a.author}</div>
+    `;
+    const btns = el("div", "", null, { style: "display:flex;gap:8px" });
+    const ok = el("button", "btn btn-agree btn-sm btn-inline", "✓ Valider");
+    ok.onclick = () => handleModerate(a.id, "approved");
+    const no = el("button", "btn btn-danger btn-sm btn-inline", "✗ Rejeter");
+    no.onclick = () => handleModerate(a.id, "rejected");
+    btns.appendChild(ok); btns.appendChild(no); card.appendChild(btns);
+    wrap.appendChild(card);
+  });
+  if (rejected.length) {
+    wrap.appendChild(el("div", "separator"));
+    wrap.appendChild(el("div", "section-title", `Rejetées (${rejected.length})`));
+    rejected.forEach(a => {
+      const card = el("div", "card", null, { style: "opacity:0.6" });
+      card.innerHTML = `<div style="font-size:13px;margin-bottom:4px;line-height:1.5">${a.text}</div><div style="font-size:12px;color:#aaa;margin-bottom:12px">par ${a.author}</div>`;
+      const btn = el("button", "btn btn-sm btn-inline", "↩ Remettre en attente");
+      btn.onclick = () => handleModerate(a.id, "pending");
+      card.appendChild(btn); wrap.appendChild(card);
+    });
+  }
+  return wrap;
+}
+
+// ── Admin : Fusion IA ────────────────────────────────────
+function renderAdminMerge() {
+  const approved = state.assertions.filter(a => a.status === "approved");
+  const wrap = el("div");
+  wrap.appendChild(el("div", "section-title", "Fusion d'assertions avec l'IA"));
+  wrap.appendChild(el("div", "info-box", "Sélectionnez 2 assertions ou plus, puis demandez à l'IA de proposer une assertion commune."));
+  approved.forEach(a => {
+    const isSel = state.mergeTargets.includes(a.id);
+    const card = el("div", "checkbox-card" + (isSel ? " selected" : ""));
+    card.innerHTML = `<div class="checkbox-box">${isSel ? "✓" : ""}</div><div class="checkbox-text">${a.text}</div>`;
+    card.onclick = () => {
+      state.mergeTargets = isSel ? state.mergeTargets.filter(x => x !== a.id) : [...state.mergeTargets, a.id];
+      render();
+    };
+    wrap.appendChild(card);
+  });
+  const n = state.mergeTargets.length;
+  const mergeBtn = el("button", "btn btn-primary", null, { style: "margin-top:8px;margin-bottom:12px" });
+  mergeBtn.disabled = n < 2 || state.aiLoading;
+  mergeBtn.innerHTML = state.aiLoading ? '<span class="spinner"></span> Analyse en cours…' : `Fusionner ${n} assertion${n!==1?"s":""} →`;
+  mergeBtn.onclick = handleAiMerge;
+  wrap.appendChild(mergeBtn);
+  if (state.aiResult) {
+    const panel = el("div", "ai-result");
+    panel.innerHTML = `<div class="ai-result-label">Proposition de l'IA</div><div>${state.aiResult}</div>`;
+    wrap.appendChild(panel);
+    const btns = el("div", "", null, { style: "display:flex;gap:8px;margin-top:10px" });
+    const ok = el("button", "btn btn-agree btn-inline", "✓ Appliquer"); ok.onclick = handleApplyMerge;
+    const cancel = el("button", "btn btn-sm btn-inline", "Annuler"); cancel.onclick = () => { state.aiResult = null; state.mergeTargets = []; render(); };
+    btns.appendChild(ok); btns.appendChild(cancel); wrap.appendChild(btns);
+  }
+  return wrap;
+}
+
+// ── Helpers HTML ─────────────────────────────────────────
+function el(tag, cls, content, attrs) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (content) e.textContent = content;
+  if (attrs) for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+function statRow(lbl, pct, fill, color) {
+  return `<div class="stat-row">
+    <span class="stat-label" style="color:${color}">${lbl}</span>
+    <div class="stat-bar-bg"><div class="stat-bar-fill" style="width:${pct}%;background:${fill}"></div></div>
+    <span class="stat-pct">${pct}%</span>
+  </div>`;
+}
+
+// ── Démarrage ────────────────────────────────────────────
+async function init() {
+  render(); // affiche le loader
+  await loadAssertions();
+  state.loading = false;
+  subscribeRealtime();
+  render();
+}
+
+init();
+</script>
+</body>
+</html>
