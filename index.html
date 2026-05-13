@@ -181,7 +181,11 @@
 <script>
 // ─── Client Supabase ──────────────────────────────────────
 const { createClient } = supabase;
-const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY {
+  auth: {
+    flowType: "pkce",
+  }
+});
 
 // ─── Lire ?session=ID dans l'URL ─────────────────────────
 function getUrlSessionId() {
