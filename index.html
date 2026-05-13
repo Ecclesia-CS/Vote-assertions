@@ -51,6 +51,7 @@
   .label { font-size: 13px; color: #555; margin-bottom: 6px; display: block; }
   .info-box { background: #faeeda; border: 1px solid #f5d4a0; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #633806; margin-bottom: 16px; line-height: 1.5; }
   .info-box strong { font-weight: 600; }
+  .success-box { background: #eaf3de; border: 1px solid #c0dd97; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #3b6d11; margin-bottom: 16px; line-height: 1.5; }
 
   /* ── Progression ── */
   .progress-bar { height: 4px; background: #eeecea; border-radius: 2px; overflow: hidden; margin-bottom: 20px; }
@@ -178,9 +179,6 @@
 </div>
 
 <script>
-// ─── Constantes ───────────────────────────────────────────
-const ADMIN_PASSWORD = "Pierre-Yves-Richard";
-
 // ─── Client Supabase ──────────────────────────────────────
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -201,7 +199,7 @@ let state = {
 
   // Sessions
   sessions:         [],
-  currentSessionId: null,   // session active pour le votant
+  currentSessionId: null,
   sessionInput:     { title: "", description: "" },
   showNewSession:   false,
 
@@ -209,12 +207,13 @@ let state = {
   assertions:       [],
   myVotes:          {},
 
-  // Admin
-  adminMode:        localStorage.getItem("ecclesia_admin") === "true",
+  // Admin auth (Supabase Auth)
+  adminMode:        false,
+  adminUser:        null,       // session Supabase Auth
+  adminEmailInput:  "",
+  adminEmailSent:   false,
+  adminAuthError:   "",
   modal:            null,
-  pwInput:          "",
-  pwError:          false,
-  showPw:           false,
 
   // Proposer
   newA:             "",
@@ -244,9 +243,9 @@ function csLabel(s) {
   return { l: "Pas de consensus", c: "c-low" };
 }
 function sessionStatusLabel(s) {
-  if (s === "open")     return { l: "Ouverte",   cls: "badge-open" };
-  if (s === "closed")   return { l: "Fermée",    cls: "badge-closed" };
-  return                       { l: "Archivée",  cls: "badge-archived" };
+  if (s === "open")   return { l: "Ouverte",  cls: "badge-open" };
+  if (s === "closed") return { l: "Fermée",   cls: "badge-closed" };
+  return                     { l: "Archivée", cls: "badge-archived" };
 }
 function buildSessionUrl(sessionId) {
   const base = window.location.origin + window.location.pathname;
@@ -260,6 +259,88 @@ function showToast(msg) {
   setTimeout(() => t.remove(), 2200);
 }
 
+// ─── Auth admin (Supabase Auth + admin_roles) ─────────────
+async function checkAdminRole(email) {
+  if (!email) return false;
+  const { data, error } = await db
+    .from("admin_roles")
+    .select("email")
+    .eq("email", email)
+    .single();
+  return !error && !!data;
+}
+
+async function sendMagicLink() {
+  const email = state.adminEmailInput.trim();
+  if (!email) return;
+  state.adminAuthError = "";
+  render();
+
+  // Vérifier d'abord que l'email est dans admin_roles
+  const isAdmin = await checkAdminRole(email);
+  if (!isAdmin) {
+    state.adminAuthError = "Cet email n'est pas autorisé comme animateur.";
+    render();
+    return;
+  }
+
+  const { error } = await db.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: true,
+    }
+  });
+
+  if (error) {
+    state.adminAuthError = "Erreur : " + error.message;
+  } else {
+    state.adminEmailSent = true;
+  }
+  render();
+}
+
+async function doAdminLogout() {
+  await db.auth.signOut();
+  state.adminMode  = false;
+  state.adminUser  = null;
+  state.view       = "voter";
+  state.adminEmailInput = "";
+  state.adminEmailSent  = false;
+  state.adminAuthError  = "";
+  await loadAssertions();
+  render();
+}
+
+// ─── Écouter les changements de session Auth ──────────────
+function listenAuth() {
+  db.auth.onAuthStateChange(async (event, session) => {
+    if (session?.user) {
+      const isAdmin = await checkAdminRole(session.user.email);
+      if (isAdmin) {
+        state.adminUser  = session.user;
+        state.adminMode  = true;
+        state.modal      = null;
+        state.adminEmailSent  = false;
+        state.adminEmailInput = "";
+        state.adminAuthError  = "";
+        state.view       = "admin";
+        state.adminTab   = "sessions";
+        if (state.currentSessionId) await loadAllAssertions();
+        else await loadSessions();
+      } else {
+        // Connecté mais pas admin → déconnecter silencieusement
+        await db.auth.signOut();
+        state.adminMode = false;
+        state.adminUser = null;
+      }
+    } else {
+      state.adminMode = false;
+      state.adminUser = null;
+    }
+    render();
+  });
+}
+
 // ─── Chargement sessions ──────────────────────────────────
 async function loadSessions() {
   const { data, error } = await db
@@ -270,7 +351,7 @@ async function loadSessions() {
   if (!error && data) state.sessions = data;
 }
 
-// ─── Chargement assertions (scopées à la session) ─────────
+// ─── Chargement assertions ────────────────────────────────
 async function loadAssertions() {
   if (!state.currentSessionId) { state.assertions = []; return; }
   const { data, error } = await db
@@ -367,15 +448,12 @@ async function updateSessionStatus(id, status) {
 }
 
 async function moveSession(id, direction) {
-  // direction: -1 (monter) ou +1 (descendre)
   const sorted = [...state.sessions].sort((a, b) => a.position - b.position);
   const idx = sorted.findIndex(s => s.id === id);
   const swapIdx = idx + direction;
   if (swapIdx < 0 || swapIdx >= sorted.length) return;
-
   const a = sorted[idx];
   const b = sorted[swapIdx];
-  // Échanger les positions
   await db.from("sessions").update({ position: b.position }).eq("id", a.id);
   await db.from("sessions").update({ position: a.position }).eq("id", b.id);
   await loadSessions();
@@ -468,7 +546,7 @@ async function handleApplyMerge() {
   await loadAllAssertions(); render();
 }
 
-// ─── Connexion ────────────────────────────────────────────
+// ─── Connexion pseudo ─────────────────────────────────────
 function doLogin() {
   const p = (state.pseudoInput || "").trim();
   if (!p) return;
@@ -476,27 +554,15 @@ function doLogin() {
   state.pseudo = p;
   render();
 }
-function doAdminLogin() {
-  if (state.pwInput === ADMIN_PASSWORD) {
-    state.adminMode = true;
-    localStorage.setItem("ecclesia_admin", "true");
-    state.modal = null; state.pwInput = ""; state.showPw = false;
-    state.view = "admin"; state.adminTab = "sessions";
-    render();
-  } else { state.pwError = true; render(); }
-}
-function doAdminLogout() {
-  state.adminMode = false;
-  localStorage.removeItem("ecclesia_admin");
-  state.view = "voter";
-  loadAssertions().then(render);
-}
 
 // ─── Sélection session ────────────────────────────────────
 async function selectSession(sessionId) {
   state.currentSessionId = sessionId;
   localStorage.setItem("ecclesia_session", sessionId);
-  await Promise.all([loadAssertions(), loadMyVotes()]);
+  await Promise.all([
+    state.adminMode ? loadAllAssertions() : loadAssertions(),
+    loadMyVotes()
+  ]);
   state.view = "voter";
   render();
 }
@@ -527,7 +593,7 @@ function render() {
   // Onboarding pseudo
   if (!state.pseudo) { app.appendChild(renderOnboard()); root.appendChild(app); return; }
 
-  // Sélection de session (sauf si admin, qui gère ses propres sessions)
+  // Sélection de session (sauf si admin)
   if (!state.currentSessionId && !state.adminMode) {
     app.appendChild(renderHeader());
     app.appendChild(renderSessionPick());
@@ -646,12 +712,13 @@ function renderSessionBanner(sess) {
 // ── Header ───────────────────────────────────────────────
 function renderHeader() {
   const h = el("div", "header");
+  const adminEmail = state.adminUser?.email || "";
   h.innerHTML = `
     <div class="logo">⊕</div>
     <div><div class="header-title">Ecclesia</div><div class="header-sub">CentraleSupélec</div></div>
     <div class="header-right">
       <span class="pseudo-badge">👤 ${state.pseudo}</span>
-      ${state.adminMode ? '<span class="badge badge-admin">Animateur</span>' : ""}
+      ${state.adminMode ? `<span class="badge badge-admin" title="${adminEmail}">Animateur</span>` : ""}
       <span style="font-size:12px;color:#aaa"><span class="realtime-dot"></span>Live</span>
     </div>
   `;
@@ -664,12 +731,12 @@ function renderTabs() {
   const tabs = state.view === "admin"
     ? [
         { l: "← Retour", fn: () => { state.view = "voter"; loadAssertions().then(render); } },
-        { l: "Sessions",    fn: () => { state.adminTab = "sessions";  render(); }, active: state.adminTab === "sessions" },
-        { l: "Stats",       fn: () => { state.adminTab = "stats";     render(); }, active: state.adminTab === "stats" },
+        { l: "Sessions",  fn: () => { state.adminTab = "sessions";  render(); }, active: state.adminTab === "sessions" },
+        { l: "Stats",     fn: () => { state.adminTab = "stats";     render(); }, active: state.adminTab === "stats" },
         { l: `Modérer${pending > 0 ? " ("+pending+")" : ""}`, fn: () => { state.adminTab = "moderate"; render(); }, active: state.adminTab === "moderate" },
-        { l: "Politique",   fn: () => { state.adminTab = "policy";    render(); }, active: state.adminTab === "policy" },
-        { l: "Fusion IA",   fn: () => { state.adminTab = "merge";     render(); }, active: state.adminTab === "merge" },
-        { l: "🔓 Déco",     fn: () => doAdminLogout() },
+        { l: "Politique", fn: () => { state.adminTab = "policy";    render(); }, active: state.adminTab === "policy" },
+        { l: "Fusion IA", fn: () => { state.adminTab = "merge";     render(); }, active: state.adminTab === "merge" },
+        { l: "🔓 Déco",   fn: () => doAdminLogout() },
       ]
     : [
         { l: "Voter",     fn: () => { state.view = "voter";   render(); }, active: state.view === "voter" },
@@ -677,7 +744,7 @@ function renderTabs() {
         { l: "Proposer",  fn: () => { state.view = "submit";  render(); }, active: state.view === "submit" },
         state.adminMode
           ? { l: "⚙ Animer", fn: () => { state.view = "admin"; loadAllAssertions().then(render); }, active: state.view === "admin" }
-          : { l: "🔒 Animer", fn: () => { state.modal = "admin-login"; render(); } }
+          : { l: "🔒 Animer", fn: () => { state.modal = "admin-login"; state.adminEmailSent = false; state.adminEmailInput = ""; state.adminAuthError = ""; render(); } }
       ];
   const wrap = el("div", "tabs");
   tabs.forEach(t => {
@@ -688,44 +755,64 @@ function renderTabs() {
   return wrap;
 }
 
-// ── Modal admin ───────────────────────────────────────────
+// ── Modal admin login (magic link) ───────────────────────
 function renderAdminModal() {
   const wrap = el("div", "", null, { style: "position:relative;min-height:260px;margin-top:8px" });
   const bg = el("div", "modal-bg");
   const modal = el("div", "modal");
-  modal.innerHTML = `<div class="modal-title">Accès animateur</div><div class="modal-sub">Entrez le mot de passe pour accéder aux outils d'animation.</div>`;
-  const pwWrap = el("div", "", null, { style: "position:relative" });
-  const inp = el("input", "input");
-  inp.type = state.showPw ? "text" : "password";
-  inp.placeholder = "Mot de passe";
-  inp.value = state.pwInput;
-  inp.style.paddingRight = "44px";
-  inp.oninput = e => { state.pwInput = e.target.value; state.pwError = false; };
-  inp.onkeydown = e => { if (e.key === "Enter") doAdminLogin(); };
-  const eyeBtn = el("button", "", state.showPw ? "🙈" : "👁", {
-    style: "position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;padding:0;line-height:1"
-  });
-  eyeBtn.onclick = () => { state.showPw = !state.showPw; render(); };
-  pwWrap.appendChild(inp); pwWrap.appendChild(eyeBtn);
-  modal.appendChild(pwWrap);
-  if (state.pwError) {
-    const err = el("div", "", "Mot de passe incorrect.", { style: "font-size:13px;color:#a32d2d;margin-top:8px" });
-    modal.appendChild(err);
+
+  if (state.adminEmailSent) {
+    // État : lien envoyé
+    modal.innerHTML = `
+      <div class="modal-title">Lien envoyé ✓</div>
+      <div class="modal-sub">Vérifiez votre boîte mail et cliquez sur le lien de connexion.</div>
+      <div class="success-box">Un lien magique a été envoyé à <strong>${state.adminEmailInput}</strong>.<br>Le lien est valable 1 heure.</div>
+    `;
+    const resend = el("button", "btn btn-inline", "Renvoyer un lien");
+    resend.style.width = "auto";
+    resend.onclick = () => { state.adminEmailSent = false; render(); };
+    const cancel = el("button", "btn btn-inline", "Annuler");
+    cancel.style.cssText = "width:auto;margin-left:8px";
+    cancel.onclick = () => { state.modal = null; state.adminEmailInput = ""; state.adminEmailSent = false; state.adminAuthError = ""; render(); };
+    const btns = el("div", "", null, { style: "display:flex;gap:8px;margin-top:4px" });
+    btns.appendChild(resend); btns.appendChild(cancel);
+    modal.appendChild(btns);
+  } else {
+    // État : saisie email
+    modal.innerHTML = `
+      <div class="modal-title">Accès animateur</div>
+      <div class="modal-sub">Entrez votre email — vous recevrez un lien de connexion sécurisé.</div>
+    `;
+    const inp = el("input", "input");
+    inp.type = "email";
+    inp.placeholder = "votre@email.com";
+    inp.value = state.adminEmailInput;
+    inp.oninput = e => { state.adminEmailInput = e.target.value; state.adminAuthError = ""; };
+    inp.onkeydown = e => { if (e.key === "Enter") sendMagicLink(); };
+    modal.appendChild(inp);
+
+    if (state.adminAuthError) {
+      const err = el("div", "", state.adminAuthError, { style: "font-size:13px;color:#a32d2d;margin-top:8px" });
+      modal.appendChild(err);
+    }
+
+    const btns = el("div", "", null, { style: "display:flex;gap:8px;margin-top:12px" });
+    const ok = el("button", "btn btn-primary btn-inline", "Envoyer le lien →");
+    ok.onclick = sendMagicLink;
+    const cancel = el("button", "btn btn-inline", "Annuler");
+    cancel.onclick = () => { state.modal = null; state.adminEmailInput = ""; state.adminAuthError = ""; render(); };
+    btns.appendChild(ok); btns.appendChild(cancel);
+    modal.appendChild(btns);
+
+    setTimeout(() => inp.focus(), 50);
   }
-  const btns = el("div", "", null, { style: "display:flex;gap:8px;margin-top:12px" });
-  const ok = el("button", "btn btn-primary btn-inline", "Connexion"); ok.onclick = doAdminLogin;
-  const cancel = el("button", "btn btn-inline", "Annuler");
-  cancel.onclick = () => { state.modal = null; state.pwInput = ""; state.pwError = false; state.showPw = false; render(); };
-  btns.appendChild(ok); btns.appendChild(cancel);
-  modal.appendChild(btns);
+
   bg.appendChild(modal); wrap.appendChild(bg);
-  setTimeout(() => inp.focus(), 50);
   return wrap;
 }
 
 // ── Vue Voter ────────────────────────────────────────────
 function renderVoter() {
-  // Si admin sans session sélectionnée, on propose de choisir dans l'onglet sessions
   if (!state.currentSessionId) {
     const wrap = el("div", "empty-state");
     wrap.innerHTML = `<div style="font-size:32px;margin-bottom:12px">🗣</div><div>Sélectionnez ou créez une session dans l'onglet <strong>Sessions</strong>.</div>`;
@@ -830,98 +917,71 @@ function renderAdminSessions() {
   const wrap = el("div");
   wrap.appendChild(el("div", "section-title", "Gestion des sessions"));
 
-  // Bouton créer
   const createBtn = el("button", "btn btn-primary", null, { style: "margin-bottom:16px" });
   createBtn.innerHTML = state.showNewSession ? "✕ Annuler" : "+ Nouvelle session";
   createBtn.onclick = () => { state.showNewSession = !state.showNewSession; render(); };
   wrap.appendChild(createBtn);
 
-  // Formulaire création
   if (state.showNewSession) {
     const form = el("div", "card", null, { style: "margin-bottom:16px" });
     form.appendChild(el("div", "section-title", "Nouvelle session"));
-
     const titleInp = el("input", "input");
     titleInp.placeholder = "Titre du débat (ex. Débat sur l'héritage)";
     titleInp.value = state.sessionInput.title;
     titleInp.oninput = e => state.sessionInput.title = e.target.value;
     titleInp.onkeydown = e => { if (e.key === "Enter") createSession(); };
-
     const descInp = el("textarea", "input textarea", null, { style: "min-height:60px;margin-top:8px" });
     descInp.placeholder = "Description courte (optionnel)";
     descInp.value = state.sessionInput.description;
     descInp.oninput = e => state.sessionInput.description = e.target.value;
-
     const okBtn = el("button", "btn btn-primary", "Créer →", { style: "margin-top:10px" });
     okBtn.onclick = createSession;
-
     form.appendChild(el("label", "label", "Titre"));
     form.appendChild(titleInp);
-    form.appendChild(el("label", "label", null, { style: "margin-top:10px" }));
-    form.querySelector("label:last-of-type").textContent = "Description (optionnel)";
+    const descLabel = el("label", "label", "Description (optionnel)");
+    descLabel.style.marginTop = "10px";
+    form.appendChild(descLabel);
     form.appendChild(descInp);
     form.appendChild(okBtn);
     wrap.appendChild(form);
   }
 
-  // Liste des sessions
   if (!state.sessions.length) {
     wrap.appendChild(el("div", "empty-state", "Aucune session. Créez-en une pour commencer."));
     return wrap;
   }
 
   const sorted = [...state.sessions].sort((a, b) => a.position - b.position);
-
   sorted.forEach((s, idx) => {
     const { l: statusL, cls: statusCls } = sessionStatusLabel(s.status);
     const card = el("div", "session-admin-card");
-
-    // Header
     const header = el("div", "session-admin-header");
-    const titleSpan = el("span", "session-admin-title", s.title);
-    const statusBadge = el("span", `badge ${statusCls}`, statusL);
-    header.appendChild(titleSpan);
-    header.appendChild(statusBadge);
+    header.appendChild(el("span", "session-admin-title", s.title));
+    header.appendChild(el("span", `badge ${statusCls}`, statusL));
     card.appendChild(header);
+    if (s.description) card.appendChild(el("div", "", s.description, { style: "font-size:13px;color:#888;margin-bottom:6px" }));
 
-    if (s.description) {
-      card.appendChild(el("div", "", s.description, { style: "font-size:13px;color:#888;margin-bottom:6px" }));
-    }
-
-    // Actions
     const actions = el("div", "session-admin-actions");
-
-    // Boutons ordre
     const orderWrap = el("div", "order-btns");
     const upBtn = el("button", "btn btn-sm btn-icon btn-inline", "↑");
-    upBtn.disabled = idx === 0;
-    upBtn.title = "Monter";
+    upBtn.disabled = idx === 0; upBtn.title = "Monter";
     upBtn.onclick = () => moveSession(s.id, -1);
     const downBtn = el("button", "btn btn-sm btn-icon btn-inline", "↓");
-    downBtn.disabled = idx === sorted.length - 1;
-    downBtn.title = "Descendre";
+    downBtn.disabled = idx === sorted.length - 1; downBtn.title = "Descendre";
     downBtn.onclick = () => moveSession(s.id, 1);
-    orderWrap.appendChild(upBtn);
-    orderWrap.appendChild(downBtn);
+    orderWrap.appendChild(upBtn); orderWrap.appendChild(downBtn);
     actions.appendChild(orderWrap);
 
-    // Lien direct
     const linkBtn = el("button", "btn btn-sm btn-inline", "🔗 Lien");
     linkBtn.onclick = () => copySessionLink(s.id);
     actions.appendChild(linkBtn);
 
-    // Ouvrir dans la vue votant
     if (s.status !== "archived") {
       const goBtn = el("button", "btn btn-sm btn-inline", "▶ Ouvrir");
-      goBtn.onclick = async () => {
-        await selectSession(s.id);
-        state.view = "voter";
-        render();
-      };
+      goBtn.onclick = async () => { await selectSession(s.id); state.view = "voter"; render(); };
       actions.appendChild(goBtn);
     }
 
-    // Statut
     if (s.status === "open") {
       const closeBtn = el("button", "btn btn-sm btn-inline", "🔒 Fermer");
       closeBtn.onclick = () => updateSessionStatus(s.id, "closed");
@@ -935,9 +995,7 @@ function renderAdminSessions() {
     if (s.status !== "archived") {
       const archBtn = el("button", "btn btn-sm btn-inline btn-danger", "Archiver");
       archBtn.onclick = () => {
-        if (confirm(`Archiver "${s.title}" ? Elle ne sera plus visible des participants.`)) {
-          updateSessionStatus(s.id, "archived");
-        }
+        if (confirm(`Archiver "${s.title}" ?`)) updateSessionStatus(s.id, "archived");
       };
       actions.appendChild(archBtn);
     }
@@ -945,15 +1003,12 @@ function renderAdminSessions() {
     card.appendChild(actions);
     wrap.appendChild(card);
   });
-
   return wrap;
 }
 
 // ── Admin : Stats ────────────────────────────────────────
 function renderAdminStats() {
-  if (!state.currentSessionId) {
-    return el("div", "empty-state", "Sélectionnez une session via l'onglet Sessions.");
-  }
+  if (!state.currentSessionId) return el("div", "empty-state", "Sélectionnez une session via l'onglet Sessions.");
   const approved = state.assertions.filter(a => a.status === "approved");
   const wrap = el("div");
   wrap.appendChild(el("div", "section-title", "Statistiques des assertions validées"));
@@ -979,9 +1034,7 @@ function renderAdminStats() {
 
 // ── Admin : Modération ───────────────────────────────────
 function renderAdminMod() {
-  if (!state.currentSessionId) {
-    return el("div", "empty-state", "Sélectionnez une session via l'onglet Sessions.");
-  }
+  if (!state.currentSessionId) return el("div", "empty-state", "Sélectionnez une session via l'onglet Sessions.");
   const pending  = state.assertions.filter(a => a.status === "pending");
   const rejected = state.assertions.filter(a => a.status === "rejected");
   const wrap = el("div");
@@ -1047,9 +1100,7 @@ function renderAdminPolicy() {
 
 // ── Admin : Fusion IA ─────────────────────────────────────
 function renderAdminMerge() {
-  if (!state.currentSessionId) {
-    return el("div", "empty-state", "Sélectionnez une session via l'onglet Sessions.");
-  }
+  if (!state.currentSessionId) return el("div", "empty-state", "Sélectionnez une session via l'onglet Sessions.");
   const approved = state.assertions.filter(a => a.status === "approved");
   const wrap = el("div");
   wrap.appendChild(el("div", "section-title", "Fusion d'assertions avec l'IA"));
@@ -1103,9 +1154,12 @@ function statRow(lbl, pct, fill, color) {
 async function init() {
   render(); // loader
 
+  // Écouter les changements d'auth en premier
+  listenAuth();
+
   await Promise.all([loadSessions(), loadConfig()]);
 
-  // Détecter session dans l'URL (?session=ID)
+  // Détecter session dans l'URL
   const urlSessionId = getUrlSessionId();
   if (urlSessionId) {
     const exists = state.sessions.find(s => s.id === urlSessionId && s.status !== "archived");
@@ -1114,7 +1168,6 @@ async function init() {
       localStorage.setItem("ecclesia_session", urlSessionId);
     }
   } else {
-    // Restaurer session depuis localStorage si encore valide
     const saved = parseInt(localStorage.getItem("ecclesia_session") || "0", 10);
     if (saved) {
       const exists = state.sessions.find(s => s.id === saved && s.status !== "archived");
@@ -1125,12 +1178,6 @@ async function init() {
   // Charger données si session connue
   if (state.currentSessionId) {
     await Promise.all([loadAssertions(), loadMyVotes()]);
-  }
-
-  // Restaurer mode admin
-  if (state.adminMode) {
-    state.view = "admin";
-    if (state.currentSessionId) await loadAllAssertions();
   }
 
   state.loading = false;
